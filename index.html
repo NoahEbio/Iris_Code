@@ -1,0 +1,578 @@
+<!--
+  Iris v1 - iPhone eyes/reflex layer
+
+  IMPORTANT:
+  Web Bluetooth requires a secure context.
+  Host this file on GitHub Pages or another HTTPS static host.
+
+  http://localhost is considered secure by some desktop browsers,
+  but Bluefy on iPhone should use a real HTTPS endpoint.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+  >
+  <title>Iris v1</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #111;
+      color: #eee;
+    }
+
+    main {
+      width: 100%;
+      max-width: 520px;
+      margin: auto;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 24px;
+    }
+
+    #previewWrap {
+      width: 100%;
+      overflow: hidden;
+      border-radius: 12px;
+      background: #000;
+      margin-bottom: 14px;
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #000;
+    }
+
+    canvas {
+      display: none;
+    }
+
+    .status {
+      background: #1c1c1e;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    #cameraMessage {
+      margin: 10px 0;
+      color: #ffb4b4;
+      white-space: pre-wrap;
+    }
+
+    button {
+      width: 100%;
+      min-height: 52px;
+      border: 0;
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: 600;
+      background: #eee;
+      color: #111;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+    }
+  </style>
+</head>
+
+<body>
+<main>
+  <h1>Iris v1</h1>
+
+  <div id="previewWrap">
+    <video
+      id="video"
+      autoplay
+      muted
+      playsinline
+    ></video>
+  </div>
+
+  <canvas
+    id="canvas"
+    width="160"
+    height="120"
+  ></canvas>
+
+  <div id="cameraMessage"></div>
+
+  <div class="status">
+    <div>BLE: <span id="bleStatus">disconnected</span></div>
+    <div>Camera: <span id="cameraStatus">starting</span></div>
+    <div>Last cmd: <span id="commandStatus">S</span></div>
+    <div>Centroid: <span id="centroidStatus">--</span></div>
+    <div>Area: <span id="areaStatus">0.000</span></div>
+    <div>Ack: <span id="ackStatus">--</span></div>
+  </div>
+
+  <button id="connectButton">Connect</button>
+</main>
+
+<script>
+'use strict';
+
+/*
+ * Nordic UART Service
+ *
+ * RX 0002:
+ *   Central/iPhone -> peripheral/Nano
+ *   Write / Write Without Response
+ *
+ * TX 0003:
+ *   Peripheral/Nano -> central/iPhone
+ *   Notify
+ */
+
+const SERVICE_UUID =
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+
+const RX_UUID =
+  '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+
+const TX_UUID =
+  '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+const FRAME_WIDTH = 160;
+const FRAME_HEIGHT = 120;
+
+const RED_MIN = 140;
+const GREEN_MAX = 90;
+const BLUE_MAX = 90;
+
+const AREA_THRESHOLD = 0.02;
+
+const LEFT_BOUNDARY = 0.33;
+const RIGHT_BOUNDARY = 0.67;
+
+const BLE_PERIOD_MS = 100;
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+
+const context = canvas.getContext(
+  '2d',
+  {
+    alpha: false,
+    willReadFrequently: true
+  }
+);
+
+const previewWrap =
+  document.getElementById('previewWrap');
+
+const cameraMessage =
+  document.getElementById('cameraMessage');
+
+const bleStatus =
+  document.getElementById('bleStatus');
+
+const cameraStatus =
+  document.getElementById('cameraStatus');
+
+const commandStatus =
+  document.getElementById('commandStatus');
+
+const centroidStatus =
+  document.getElementById('centroidStatus');
+
+const areaStatus =
+  document.getElementById('areaStatus');
+
+const ackStatus =
+  document.getElementById('ackStatus');
+
+const connectButton =
+  document.getElementById('connectButton');
+
+let bluetoothDevice = null;
+let gattServer = null;
+
+let rxCharacteristic = null;
+let txCharacteristic = null;
+
+let bleConnected = false;
+let writeInProgress = false;
+
+let desiredCommand = 'S';
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+
+/* ---------------- Camera ---------------- */
+
+async function startCamera() {
+  try {
+    if (
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia
+    ) {
+      throw new Error(
+        'Camera API is unavailable in this browser.'
+      );
+    }
+
+    const stream =
+      await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment'
+        }
+      });
+
+    video.srcObject = stream;
+
+    await video.play();
+
+    cameraStatus.textContent = 'running';
+
+    requestAnimationFrame(processFrame);
+  } catch (error) {
+    console.error('Camera error:', error);
+
+    cameraStatus.textContent = 'unavailable';
+
+    previewWrap.hidden = true;
+
+    cameraMessage.textContent =
+      'Camera permission was denied or the camera could not be opened.\n' +
+      error.message;
+
+    desiredCommand = 'S';
+    commandStatus.textContent = 'S';
+  }
+}
+
+
+/* ---------------- Vision ---------------- */
+
+function processFrame() {
+  if (
+    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+  ) {
+    requestAnimationFrame(processFrame);
+    return;
+  }
+
+  context.drawImage(
+    video,
+    0,
+    0,
+    FRAME_WIDTH,
+    FRAME_HEIGHT
+  );
+
+  const frame =
+    context.getImageData(
+      0,
+      0,
+      FRAME_WIDTH,
+      FRAME_HEIGHT
+    );
+
+  const pixels = frame.data;
+
+  let redPixelCount = 0;
+  let xTotal = 0;
+
+  let pixelIndex = 0;
+
+  for (
+    let y = 0;
+    y < FRAME_HEIGHT;
+    y++
+  ) {
+    for (
+      let x = 0;
+      x < FRAME_WIDTH;
+      x++
+    ) {
+      const r = pixels[pixelIndex];
+      const g = pixels[pixelIndex + 1];
+      const b = pixels[pixelIndex + 2];
+
+      if (
+        r > RED_MIN &&
+        g < GREEN_MAX &&
+        b < BLUE_MAX
+      ) {
+        redPixelCount++;
+        xTotal += x;
+      }
+
+      pixelIndex += 4;
+    }
+  }
+
+  const area =
+    redPixelCount /
+    (FRAME_WIDTH * FRAME_HEIGHT);
+
+  let centroid = null;
+
+  if (redPixelCount > 0) {
+    centroid =
+      (xTotal / redPixelCount) /
+      (FRAME_WIDTH - 1);
+  }
+
+  areaStatus.textContent =
+    area.toFixed(3);
+
+  centroidStatus.textContent =
+    centroid === null
+      ? '--'
+      : centroid.toFixed(3);
+
+  /*
+   * Iris reflex logic.
+   *
+   * No valid target:
+   *   STOP
+   *
+   * Target left:
+   *   turn left
+   *
+   * Target right:
+   *   turn right
+   *
+   * Target centered:
+   *   drive forward
+   */
+
+  if (
+    area <= AREA_THRESHOLD ||
+    centroid === null
+  ) {
+    desiredCommand = 'S';
+  } else if (
+    centroid < LEFT_BOUNDARY
+  ) {
+    desiredCommand = 'L';
+  } else if (
+    centroid > RIGHT_BOUNDARY
+  ) {
+    desiredCommand = 'R';
+  } else {
+    desiredCommand = 'F';
+  }
+
+  commandStatus.textContent =
+    desiredCommand;
+
+  requestAnimationFrame(processFrame);
+}
+
+
+/* ---------------- BLE ---------------- */
+
+async function connectBLE() {
+  if (!navigator.bluetooth) {
+    bleStatus.textContent =
+      'Web Bluetooth unavailable';
+
+    return;
+  }
+
+  try {
+    connectButton.disabled = true;
+    bleStatus.textContent = 'searching';
+
+    bluetoothDevice =
+      await navigator.bluetooth.requestDevice({
+        filters: [
+          {
+            services: [SERVICE_UUID]
+          }
+        ]
+      });
+
+    bluetoothDevice.addEventListener(
+      'gattserverdisconnected',
+      handleBLEDisconnect
+    );
+
+    bleStatus.textContent = 'connecting';
+
+    gattServer =
+      await bluetoothDevice.gatt.connect();
+
+    const service =
+      await gattServer.getPrimaryService(
+        SERVICE_UUID
+      );
+
+    /*
+     * RX is the Nano's receive characteristic.
+     * The iPhone writes commands here.
+     */
+    rxCharacteristic =
+      await service.getCharacteristic(
+        RX_UUID
+      );
+
+    /*
+     * TX is the Nano's transmit characteristic.
+     * Iris subscribes to it for ACK messages.
+     */
+    txCharacteristic =
+      await service.getCharacteristic(
+        TX_UUID
+      );
+
+    await txCharacteristic.startNotifications();
+
+    txCharacteristic.addEventListener(
+      'characteristicvaluechanged',
+      handleNotification
+    );
+
+    bleConnected = true;
+
+    bleStatus.textContent =
+      `connected: ${bluetoothDevice.name || 'Iris Nano'}`;
+
+    connectButton.textContent =
+      'Connected';
+  } catch (error) {
+    console.error('BLE connection error:', error);
+
+    bleConnected = false;
+
+    bleStatus.textContent =
+      `error: ${error.message}`;
+
+    connectButton.disabled = false;
+    connectButton.textContent = 'Connect';
+  }
+}
+
+
+function handleBLEDisconnect() {
+  bleConnected = false;
+
+  rxCharacteristic = null;
+  txCharacteristic = null;
+  gattServer = null;
+
+  ackStatus.textContent = '--';
+
+  bleStatus.textContent =
+    'disconnected';
+
+  connectButton.disabled = false;
+  connectButton.textContent = 'Connect';
+}
+
+
+function handleNotification(event) {
+  const value = event.target.value;
+
+  const bytes =
+    new Uint8Array(
+      value.buffer,
+      value.byteOffset,
+      value.byteLength
+    );
+
+  const message =
+    decoder.decode(bytes);
+
+  ackStatus.textContent = message;
+}
+
+
+/* ---------------- BLE command loop ---------------- */
+
+async function transmitCommand() {
+  if (
+    !bleConnected ||
+    !rxCharacteristic ||
+    writeInProgress
+  ) {
+    return;
+  }
+
+  writeInProgress = true;
+
+  const command = desiredCommand;
+
+  try {
+    const data =
+      encoder.encode(command);
+
+    await rxCharacteristic
+      .writeValueWithoutResponse(data);
+  } catch (error) {
+    console.error(
+      'BLE write failed:',
+      error
+    );
+
+    bleStatus.textContent =
+      `write error: ${error.message}`;
+  } finally {
+    writeInProgress = false;
+  }
+}
+
+
+connectButton.addEventListener(
+  'click',
+  connectBLE
+);
+
+
+/*
+ * 10 Hz actuator command stream.
+ *
+ * Commands are intentionally repeated even if unchanged.
+ * The Nano uses command arrival as a link watchdog.
+ */
+setInterval(
+  transmitCommand,
+  BLE_PERIOD_MS
+);
+
+
+/*
+ * If iOS backgrounds the page, immediately change the desired
+ * command to STOP. The Nano also has its own independent
+ * 500 ms communications failsafe.
+ */
+document.addEventListener(
+  'visibilitychange',
+  () => {
+    if (document.hidden) {
+      desiredCommand = 'S';
+      commandStatus.textContent = 'S';
+    }
+  }
+);
+
+
+/* Start the camera immediately. */
+startCamera();
+
+</script>
+</body>
+</html>
