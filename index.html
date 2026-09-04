@@ -1,147 +1,293 @@
 <!--
-  Iris v1 - iPhone eyes/reflex layer
+  Iris v4 - iPhone vision/reflex layer
 
-  IMPORTANT:
-  Web Bluetooth requires a secure context.
-  Host this file on GitHub Pages or another HTTPS static host.
+  Host via HTTPS, e.g. GitHub Pages.
+  Bluefy requires a secure context for Web Bluetooth.
 
-  http://localhost is considered secure by some desktop browsers,
-  but Bluefy on iPhone should use a real HTTPS endpoint.
+  Camera:
+    facingMode: { exact: "user" }
+    = physical FRONT / SELFIE / SCREEN-SIDE camera.
+
+  The preview is intentionally NOT mirrored so image left/right
+  remains consistent with robot steering.
 -->
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0, viewport-fit=cover"
-  >
-  <title>Iris v1</title>
+<meta charset="UTF-8">
 
-  <style>
-    * {
-      box-sizing: border-box;
-    }
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+>
 
-    body {
-      margin: 0;
-      padding: 16px;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      background: #111;
-      color: #eee;
-    }
+<title>Iris v4</title>
 
-    main {
-      width: 100%;
-      max-width: 520px;
-      margin: auto;
-    }
+<style>
+* {
+  box-sizing: border-box;
+}
 
-    h1 {
-      margin: 0 0 12px;
-      font-size: 24px;
-    }
+body {
+  margin: 0;
+  padding: 12px;
+  background: #111;
+  color: #eee;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
 
-    #previewWrap {
-      width: 100%;
-      overflow: hidden;
-      border-radius: 12px;
-      background: #000;
-      margin-bottom: 14px;
-    }
+main {
+  max-width: 520px;
+  margin: auto;
+}
 
-    video {
-      display: block;
-      width: 100%;
-      height: auto;
-      background: #000;
-    }
+h1 {
+  margin: 4px 0 12px;
+}
 
-    canvas {
-      display: none;
-    }
+#preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 12px;
+  background: black;
+}
 
-    .status {
-      background: #1c1c1e;
-      border-radius: 12px;
-      padding: 12px;
-      margin-bottom: 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 15px;
-      line-height: 1.7;
-    }
+#video,
+#overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
 
-    #cameraMessage {
-      margin: 10px 0;
-      color: #ffb4b4;
-      white-space: pre-wrap;
-    }
+#video {
+  object-fit: cover;
 
-    button {
-      width: 100%;
-      min-height: 52px;
-      border: 0;
-      border-radius: 12px;
-      font-size: 18px;
-      font-weight: 600;
-      background: #eee;
-      color: #111;
-    }
+  /* IMPORTANT:
+     Do NOT mirror this preview.
+     Robot steering uses physical camera coordinates.
+  */
+  transform: none;
+}
 
-    button:disabled {
-      opacity: 0.55;
-    }
-  </style>
+#overlay {
+  pointer-events: none;
+}
+
+#processCanvas {
+  display: none;
+}
+
+.panel {
+  background: #1c1c1e;
+  border-radius: 12px;
+  padding: 12px;
+  margin-top: 10px;
+}
+
+.control {
+  margin-bottom: 15px;
+}
+
+.control:last-child {
+  margin-bottom: 0;
+}
+
+.control label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+input[type="range"],
+input[type="color"] {
+  width: 100%;
+}
+
+input[type="color"] {
+  height: 44px;
+}
+
+.status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.65;
+  font-size: 14px;
+}
+
+button {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 10px;
+  border: none;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+#error {
+  margin-top: 10px;
+  color: #ffb4b4;
+}
+</style>
 </head>
 
 <body>
-<main>
-  <h1>Iris v1</h1>
 
-  <div id="previewWrap">
-    <video
-      id="video"
-      autoplay
-      muted
-      playsinline
-    ></video>
-  </div>
+<main>
+
+<h1>Iris v4</h1>
+
+<div id="preview">
+  <video
+    id="video"
+    autoplay
+    muted
+    playsinline
+  ></video>
 
   <canvas
-    id="canvas"
+    id="overlay"
     width="160"
     height="120"
   ></canvas>
+</div>
 
-  <div id="cameraMessage"></div>
+<canvas
+  id="processCanvas"
+  width="160"
+  height="120"
+></canvas>
 
-  <div class="status">
-    <div>BLE: <span id="bleStatus">disconnected</span></div>
-    <div>Camera: <span id="cameraStatus">starting</span></div>
-    <div>Last cmd: <span id="commandStatus">S</span></div>
-    <div>Centroid: <span id="centroidStatus">--</span></div>
-    <div>Area: <span id="areaStatus">0.000</span></div>
-    <div>Ack: <span id="ackStatus">--</span></div>
+<div id="error"></div>
+
+
+<div class="panel">
+
+  <div class="control">
+
+    <label>
+      <span>Target color</span>
+      <span id="colorText">#FF0000</span>
+    </label>
+
+    <input
+      id="targetColor"
+      type="color"
+      value="#ff0000"
+    >
+
   </div>
 
-  <button id="connectButton">Connect</button>
+
+  <div class="control">
+
+    <label>
+      <span>Color tolerance</span>
+      <span id="toleranceText">120</span>
+    </label>
+
+    <input
+      id="tolerance"
+      type="range"
+      min="30"
+      max="220"
+      value="120"
+    >
+
+  </div>
+
+
+  <div class="control">
+
+    <label>
+      <span>Reverse at target width</span>
+      <span id="reverseWidthText">75%</span>
+    </label>
+
+    <input
+      id="reverseWidth"
+      type="range"
+      min="40"
+      max="95"
+      value="75"
+    >
+
+  </div>
+
+</div>
+
+
+<div class="panel status">
+
+  <div>
+    BLE:
+    <span id="bleStatus">disconnected</span>
+  </div>
+
+  <div>
+    Camera:
+    <span id="cameraStatus">starting</span>
+  </div>
+
+  <div>
+    Command:
+    <span id="commandStatus">S</span>
+  </div>
+
+  <div>
+    Motion:
+    <span id="motionStatus">STOP</span>
+  </div>
+
+  <div>
+    Centroid X:
+    <span id="centroidStatus">--</span>
+  </div>
+
+  <div>
+    Area:
+    <span id="areaStatus">0.000</span>
+  </div>
+
+  <div>
+    Target width:
+    <span id="widthStatus">0%</span>
+  </div>
+
+  <div>
+    Sound:
+    <span id="soundStatus">off</span>
+  </div>
+
+  <div>
+    Ack:
+    <span id="ackStatus">--</span>
+  </div>
+
+</div>
+
+
+<button id="connectButton">
+  Connect BLE
+</button>
+
+<button id="soundButton">
+  Enable / Test Sound
+</button>
+
 </main>
+
 
 <script>
 'use strict';
 
-/*
- * Nordic UART Service
- *
- * RX 0002:
- *   Central/iPhone -> peripheral/Nano
- *   Write / Write Without Response
- *
- * TX 0003:
- *   Peripheral/Nano -> central/iPhone
- *   Notify
- */
+
+/* ============================================================
+   BLE configuration
+   ============================================================ */
 
 const SERVICE_UUID =
   '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
@@ -152,36 +298,82 @@ const RX_UUID =
 const TX_UUID =
   '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
+
+/* ============================================================
+   Vision configuration
+   ============================================================ */
+
 const FRAME_WIDTH = 160;
 const FRAME_HEIGHT = 120;
 
-const RED_MIN = 140;
-const GREEN_MAX = 90;
-const BLUE_MAX = 90;
+const MIN_AREA = 0.02;
 
-const AREA_THRESHOLD = 0.02;
 
-const LEFT_BOUNDARY = 0.33;
-const RIGHT_BOUNDARY = 0.67;
+/*
+  Steering zones:
 
-const BLE_PERIOD_MS = 100;
+  0.00 ---------- 0.20 ---------- 0.40 ---- 0.60 ---------- 0.80 ---------- 1.00
 
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
+     LEFT FAST       LEFT SLOW        FORWARD      RIGHT SLOW      RIGHT FAST
+*/
 
-const context = canvas.getContext(
-  '2d',
-  {
-    alpha: false,
-    willReadFrequently: true
-  }
-);
+const LEFT_FAST_BOUNDARY = 0.20;
+const LEFT_SLOW_BOUNDARY = 0.40;
 
-const previewWrap =
-  document.getElementById('previewWrap');
+const RIGHT_SLOW_BOUNDARY = 0.60;
+const RIGHT_FAST_BOUNDARY = 0.80;
 
-const cameraMessage =
-  document.getElementById('cameraMessage');
+
+const BLE_INTERVAL_MS = 100;
+
+
+/* ============================================================
+   DOM
+   ============================================================ */
+
+const video =
+  document.getElementById('video');
+
+const processCanvas =
+  document.getElementById('processCanvas');
+
+const overlay =
+  document.getElementById('overlay');
+
+
+const ctx =
+  processCanvas.getContext(
+    '2d',
+    {
+      alpha: false,
+      willReadFrequently: true
+    }
+  );
+
+
+const overlayCtx =
+  overlay.getContext('2d');
+
+
+const targetColorInput =
+  document.getElementById('targetColor');
+
+const toleranceInput =
+  document.getElementById('tolerance');
+
+const reverseWidthInput =
+  document.getElementById('reverseWidth');
+
+
+const colorText =
+  document.getElementById('colorText');
+
+const toleranceText =
+  document.getElementById('toleranceText');
+
+const reverseWidthText =
+  document.getElementById('reverseWidthText');
+
 
 const bleStatus =
   document.getElementById('bleStatus');
@@ -192,88 +384,294 @@ const cameraStatus =
 const commandStatus =
   document.getElementById('commandStatus');
 
+const motionStatus =
+  document.getElementById('motionStatus');
+
 const centroidStatus =
   document.getElementById('centroidStatus');
 
 const areaStatus =
   document.getElementById('areaStatus');
 
+const widthStatus =
+  document.getElementById('widthStatus');
+
 const ackStatus =
   document.getElementById('ackStatus');
+
+const soundStatus =
+  document.getElementById('soundStatus');
+
+const errorElement =
+  document.getElementById('error');
+
 
 const connectButton =
   document.getElementById('connectButton');
 
+const soundButton =
+  document.getElementById('soundButton');
+
+
+/* ============================================================
+   Runtime state
+   ============================================================ */
+
+let desiredCommand = 'S';
+
 let bluetoothDevice = null;
-let gattServer = null;
 
 let rxCharacteristic = null;
 let txCharacteristic = null;
 
 let bleConnected = false;
-let writeInProgress = false;
+let writeBusy = false;
 
-let desiredCommand = 'S';
+let targetPreviouslyVisible = false;
+
+let audioContext = null;
+let soundEnabled = false;
+
+let lastChimeTime = 0;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 
-/* ---------------- Camera ---------------- */
+/* ============================================================
+   Command labels
+   ============================================================ */
 
-async function startCamera() {
-  try {
-    if (
-      !navigator.mediaDevices ||
-      !navigator.mediaDevices.getUserMedia
-    ) {
-      throw new Error(
-        'Camera API is unavailable in this browser.'
-      );
-    }
+function commandName(command) {
 
-    const stream =
-      await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'environment'
-        }
-      });
+  switch (command) {
 
-    video.srcObject = stream;
+    case 'F':
+      return 'FORWARD';
 
-    await video.play();
+    case 'B':
+      return 'REVERSE';
 
-    cameraStatus.textContent = 'running';
+    case 'L':
+      return 'LEFT SLOW';
 
-    requestAnimationFrame(processFrame);
-  } catch (error) {
-    console.error('Camera error:', error);
+    case 'R':
+      return 'RIGHT SLOW';
 
-    cameraStatus.textContent = 'unavailable';
+    case 'A':
+      return 'LEFT FAST';
 
-    previewWrap.hidden = true;
+    case 'D':
+      return 'RIGHT FAST';
 
-    cameraMessage.textContent =
-      'Camera permission was denied or the camera could not be opened.\n' +
-      error.message;
-
-    desiredCommand = 'S';
-    commandStatus.textContent = 'S';
+    default:
+      return 'STOP';
   }
 }
 
 
-/* ---------------- Vision ---------------- */
+function setCommand(command) {
+
+  desiredCommand = command;
+
+  commandStatus.textContent =
+    command;
+
+  motionStatus.textContent =
+    commandName(command);
+}
+
+
+/* ============================================================
+   User controls
+   ============================================================ */
+
+function updateControls() {
+
+  colorText.textContent =
+    targetColorInput.value.toUpperCase();
+
+  toleranceText.textContent =
+    toleranceInput.value;
+
+  reverseWidthText.textContent =
+    `${reverseWidthInput.value}%`;
+}
+
+
+targetColorInput.addEventListener(
+  'input',
+  updateControls
+);
+
+toleranceInput.addEventListener(
+  'input',
+  updateControls
+);
+
+reverseWidthInput.addEventListener(
+  'input',
+  updateControls
+);
+
+updateControls();
+
+
+/* ============================================================
+   Front / selfie / screen-side camera
+   ============================================================ */
+
+async function startCamera() {
+
+  try {
+
+    if (
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia
+    ) {
+
+      throw new Error(
+        'Camera API unavailable.'
+      );
+    }
+
+
+    /*
+      "user" means the user-facing camera:
+      the camera physically located on the display/screen side.
+
+      "exact" prevents the browser from silently choosing
+      the rear/environment camera.
+    */
+
+    const stream =
+      await navigator.mediaDevices.getUserMedia({
+
+        video: {
+
+          facingMode: {
+            exact: 'user'
+          },
+
+          width: {
+            ideal: 640
+          },
+
+          height: {
+            ideal: 480
+          }
+
+        },
+
+        audio: false
+
+      });
+
+
+    video.srcObject =
+      stream;
+
+
+    await video.play();
+
+
+    const track =
+      stream.getVideoTracks()[0];
+
+
+    const settings =
+      track.getSettings();
+
+
+    if (
+      settings.facingMode === 'user'
+    ) {
+
+      cameraStatus.textContent =
+        'FRONT / SELFIE';
+
+    } else {
+
+      cameraStatus.textContent =
+        `camera: ${
+          settings.facingMode || 'unknown'
+        }`;
+    }
+
+
+    requestAnimationFrame(
+      processFrame
+    );
+
+  } catch (error) {
+
+    console.error(error);
+
+
+    cameraStatus.textContent =
+      'unavailable';
+
+
+    errorElement.textContent =
+      `Camera error: ${error.message}`;
+
+
+    setCommand('S');
+  }
+}
+
+
+/* ============================================================
+   Color conversion
+   ============================================================ */
+
+function hexToRGB(hex) {
+
+  const value =
+    parseInt(
+      hex.substring(1),
+      16
+    );
+
+
+  return {
+
+    r:
+      (value >> 16) &
+      255,
+
+    g:
+      (value >> 8) &
+      255,
+
+    b:
+      value &
+      255
+
+  };
+}
+
+
+/* ============================================================
+   Vision loop
+   ============================================================ */
 
 function processFrame() {
+
   if (
-    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+    video.readyState <
+    HTMLMediaElement.HAVE_CURRENT_DATA
   ) {
-    requestAnimationFrame(processFrame);
+
+    requestAnimationFrame(
+      processFrame
+    );
+
     return;
   }
 
-  context.drawImage(
+
+  ctx.drawImage(
     video,
     0,
     0,
@@ -281,211 +679,900 @@ function processFrame() {
     FRAME_HEIGHT
   );
 
+
   const frame =
-    context.getImageData(
+    ctx.getImageData(
       0,
       0,
       FRAME_WIDTH,
       FRAME_HEIGHT
     );
 
-  const pixels = frame.data;
 
-  let redPixelCount = 0;
-  let xTotal = 0;
+  const pixels =
+    frame.data;
 
-  let pixelIndex = 0;
+
+  const target =
+    hexToRGB(
+      targetColorInput.value
+    );
+
+
+  const tolerance =
+    Number(
+      toleranceInput.value
+    );
+
+
+  const toleranceSquared =
+    tolerance *
+    tolerance;
+
+
+  let count = 0;
+
+  let sumX = 0;
+  let sumY = 0;
+
+  let minX =
+    FRAME_WIDTH;
+
+  let maxX =
+    -1;
+
+  let minY =
+    FRAME_HEIGHT;
+
+  let maxY =
+    -1;
+
+
+  let index = 0;
+
 
   for (
     let y = 0;
     y < FRAME_HEIGHT;
     y++
   ) {
+
     for (
       let x = 0;
       x < FRAME_WIDTH;
       x++
     ) {
-      const r = pixels[pixelIndex];
-      const g = pixels[pixelIndex + 1];
-      const b = pixels[pixelIndex + 2];
+
+      const r =
+        pixels[index];
+
+      const g =
+        pixels[index + 1];
+
+      const b =
+        pixels[index + 2];
+
+
+      const dr =
+        r - target.r;
+
+      const dg =
+        g - target.g;
+
+      const db =
+        b - target.b;
+
+
+      const distanceSquared =
+        dr * dr +
+        dg * dg +
+        db * db;
+
 
       if (
-        r > RED_MIN &&
-        g < GREEN_MAX &&
-        b < BLUE_MAX
+        distanceSquared <=
+        toleranceSquared
       ) {
-        redPixelCount++;
-        xTotal += x;
+
+        count++;
+
+        sumX += x;
+        sumY += y;
+
+
+        if (x < minX) {
+          minX = x;
+        }
+
+        if (x > maxX) {
+          maxX = x;
+        }
+
+        if (y < minY) {
+          minY = y;
+        }
+
+        if (y > maxY) {
+          maxY = y;
+        }
       }
 
-      pixelIndex += 4;
+
+      index += 4;
     }
   }
 
+
   const area =
-    redPixelCount /
-    (FRAME_WIDTH * FRAME_HEIGHT);
+    count /
+    (
+      FRAME_WIDTH *
+      FRAME_HEIGHT
+    );
 
-  let centroid = null;
 
-  if (redPixelCount > 0) {
-    centroid =
-      (xTotal / redPixelCount) /
-      (FRAME_WIDTH - 1);
+  let centroidX =
+    null;
+
+  let centroidY =
+    null;
+
+  let targetWidth =
+    0;
+
+
+  if (
+    count > 0
+  ) {
+
+    centroidX =
+      (
+        sumX /
+        count
+      ) /
+      (
+        FRAME_WIDTH -
+        1
+      );
+
+
+    centroidY =
+      (
+        sumY /
+        count
+      ) /
+      (
+        FRAME_HEIGHT -
+        1
+      );
+
+
+    targetWidth =
+      (
+        maxX -
+        minX +
+        1
+      ) /
+      FRAME_WIDTH;
   }
+
+
+  const validTarget =
+    (
+      count > 0 &&
+      area >
+      MIN_AREA
+    );
+
+
+  const reverseThreshold =
+    Number(
+      reverseWidthInput.value
+    ) /
+    100;
+
+
+  /*
+    Highest priority:
+      target is too close -> REVERSE
+
+    Otherwise steering depends on horizontal position.
+  */
+
+  if (!validTarget) {
+
+    setCommand('S');
+
+  } else if (
+    targetWidth >=
+    reverseThreshold
+  ) {
+
+    setCommand('B');
+
+  } else if (
+    centroidX <
+    LEFT_FAST_BOUNDARY
+  ) {
+
+    setCommand('A');
+
+  } else if (
+    centroidX <
+    LEFT_SLOW_BOUNDARY
+  ) {
+
+    setCommand('L');
+
+  } else if (
+    centroidX <=
+    RIGHT_SLOW_BOUNDARY
+  ) {
+
+    setCommand('F');
+
+  } else if (
+    centroidX <=
+    RIGHT_FAST_BOUNDARY
+  ) {
+
+    setCommand('R');
+
+  } else {
+
+    setCommand('D');
+  }
+
+
+  centroidStatus.textContent =
+    centroidX === null
+      ? '--'
+      : centroidX.toFixed(3);
+
 
   areaStatus.textContent =
     area.toFixed(3);
 
-  centroidStatus.textContent =
-    centroid === null
-      ? '--'
-      : centroid.toFixed(3);
+
+  widthStatus.textContent =
+    `${Math.round(
+      targetWidth *
+      100
+    )}%`;
+
+
+  drawOverlay(
+    validTarget,
+    minX,
+    maxX,
+    minY,
+    maxY,
+    centroidX,
+    centroidY,
+    targetWidth
+  );
+
 
   /*
-   * Iris reflex logic.
-   *
-   * No valid target:
-   *   STOP
-   *
-   * Target left:
-   *   turn left
-   *
-   * Target right:
-   *   turn right
-   *
-   * Target centered:
-   *   drive forward
-   */
+    Play chime only when transitioning:
+
+        no target -> target acquired
+
+    Prevents constant repeated sounds while tracking.
+  */
 
   if (
-    area <= AREA_THRESHOLD ||
-    centroid === null
+    validTarget &&
+    !targetPreviouslyVisible
   ) {
-    desiredCommand = 'S';
-  } else if (
-    centroid < LEFT_BOUNDARY
-  ) {
-    desiredCommand = 'L';
-  } else if (
-    centroid > RIGHT_BOUNDARY
-  ) {
-    desiredCommand = 'R';
-  } else {
-    desiredCommand = 'F';
+
+    playConfirmationChime();
   }
 
-  commandStatus.textContent =
-    desiredCommand;
 
-  requestAnimationFrame(processFrame);
+  targetPreviouslyVisible =
+    validTarget;
+
+
+  requestAnimationFrame(
+    processFrame
+  );
 }
 
 
-/* ---------------- BLE ---------------- */
+/* ============================================================
+   Debug target overlay
+   ============================================================ */
+
+function drawOverlay(
+  validTarget,
+  minX,
+  maxX,
+  minY,
+  maxY,
+  centroidX,
+  centroidY,
+  targetWidth
+) {
+
+  overlayCtx.clearRect(
+    0,
+    0,
+    FRAME_WIDTH,
+    FRAME_HEIGHT
+  );
+
+
+  /*
+    Steering guide lines
+  */
+
+  overlayCtx.lineWidth =
+    0.6;
+
+  overlayCtx.strokeStyle =
+    'rgba(255,255,255,0.35)';
+
+
+  const guides = [
+    LEFT_FAST_BOUNDARY,
+    LEFT_SLOW_BOUNDARY,
+    RIGHT_SLOW_BOUNDARY,
+    RIGHT_FAST_BOUNDARY
+  ];
+
+
+  for (
+    const guide of guides
+  ) {
+
+    const x =
+      guide *
+      FRAME_WIDTH;
+
+
+    overlayCtx.beginPath();
+
+    overlayCtx.moveTo(
+      x,
+      0
+    );
+
+    overlayCtx.lineTo(
+      x,
+      FRAME_HEIGHT
+    );
+
+    overlayCtx.stroke();
+  }
+
+
+  if (!validTarget) {
+    return;
+  }
+
+
+  const centerX =
+    (
+      minX +
+      maxX
+    ) /
+    2;
+
+
+  const centerY =
+    (
+      minY +
+      maxY
+    ) /
+    2;
+
+
+  const radiusX =
+    Math.max(
+      5,
+      (
+        maxX -
+        minX
+      ) /
+      2 +
+      4
+    );
+
+
+  const radiusY =
+    Math.max(
+      5,
+      (
+        maxY -
+        minY
+      ) /
+      2 +
+      4
+    );
+
+
+  /*
+    Circle / ellipse around object
+  */
+
+  overlayCtx.strokeStyle =
+    targetColorInput.value;
+
+  overlayCtx.lineWidth =
+    2;
+
+
+  overlayCtx.beginPath();
+
+
+  overlayCtx.ellipse(
+    centerX,
+    centerY,
+    radiusX,
+    radiusY,
+    0,
+    0,
+    Math.PI *
+    2
+  );
+
+
+  overlayCtx.stroke();
+
+
+  /*
+    Centroid crosshair
+  */
+
+  const cx =
+    centroidX *
+    (
+      FRAME_WIDTH -
+      1
+    );
+
+
+  const cy =
+    centroidY *
+    (
+      FRAME_HEIGHT -
+      1
+    );
+
+
+  overlayCtx.strokeStyle =
+    '#ffffff';
+
+  overlayCtx.lineWidth =
+    1;
+
+
+  overlayCtx.beginPath();
+
+
+  overlayCtx.moveTo(
+    cx - 4,
+    cy
+  );
+
+  overlayCtx.lineTo(
+    cx + 4,
+    cy
+  );
+
+
+  overlayCtx.moveTo(
+    cx,
+    cy - 4
+  );
+
+  overlayCtx.lineTo(
+    cx,
+    cy + 4
+  );
+
+
+  overlayCtx.stroke();
+
+
+  /*
+    Target label
+  */
+
+  const label =
+    `TARGET ${Math.round(
+      targetWidth *
+      100
+    )}% ${commandName(
+      desiredCommand
+    )}`;
+
+
+  overlayCtx.font =
+    '8px monospace';
+
+
+  const measured =
+    overlayCtx.measureText(
+      label
+    );
+
+
+  const labelX =
+    Math.max(
+      2,
+      minX
+    );
+
+
+  const labelY =
+    Math.max(
+      11,
+      minY - 3
+    );
+
+
+  overlayCtx.fillStyle =
+    'rgba(0,0,0,0.75)';
+
+
+  overlayCtx.fillRect(
+    labelX - 1,
+    labelY - 9,
+    measured.width + 4,
+    12
+  );
+
+
+  overlayCtx.fillStyle =
+    '#ffffff';
+
+
+  overlayCtx.fillText(
+    label,
+    labelX + 1,
+    labelY
+  );
+}
+
+
+/* ============================================================
+   Sound
+   ============================================================ */
+
+async function enableSound() {
+
+  const AudioContextClass =
+    window.AudioContext ||
+    window.webkitAudioContext;
+
+
+  if (!AudioContextClass) {
+
+    soundStatus.textContent =
+      'unsupported';
+
+    return;
+  }
+
+
+  if (!audioContext) {
+
+    audioContext =
+      new AudioContextClass();
+  }
+
+
+  if (
+    audioContext.state ===
+    'suspended'
+  ) {
+
+    await audioContext.resume();
+  }
+
+
+  soundEnabled =
+    true;
+
+
+  soundStatus.textContent =
+    'enabled';
+
+
+  playConfirmationChime(
+    true
+  );
+}
+
+
+/*
+  Generic upbeat two-tone chime.
+
+  It intentionally isn't a copy of another app's
+  exact sound.
+*/
+
+function playConfirmationChime(
+  force = false
+) {
+
+  if (
+    !soundEnabled ||
+    !audioContext
+  ) {
+    return;
+  }
+
+
+  const nowMilliseconds =
+    performance.now();
+
+
+  if (
+    !force &&
+    nowMilliseconds -
+    lastChimeTime <
+    1000
+  ) {
+
+    return;
+  }
+
+
+  lastChimeTime =
+    nowMilliseconds;
+
+
+  const start =
+    audioContext.currentTime;
+
+
+  playTone(
+    659.25,
+    start,
+    0.09,
+    0.11
+  );
+
+
+  playTone(
+    880.00,
+    start + 0.095,
+    0.14,
+    0.12
+  );
+}
+
+
+function playTone(
+  frequency,
+  start,
+  duration,
+  volume
+) {
+
+  const oscillator =
+    audioContext.createOscillator();
+
+
+  const gain =
+    audioContext.createGain();
+
+
+  oscillator.type =
+    'sine';
+
+
+  oscillator.frequency.setValueAtTime(
+    frequency,
+    start
+  );
+
+
+  gain.gain.setValueAtTime(
+    0.0001,
+    start
+  );
+
+
+  gain.gain.exponentialRampToValueAtTime(
+    volume,
+    start + 0.015
+  );
+
+
+  gain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    start + duration
+  );
+
+
+  oscillator.connect(
+    gain
+  );
+
+
+  gain.connect(
+    audioContext.destination
+  );
+
+
+  oscillator.start(
+    start
+  );
+
+
+  oscillator.stop(
+    start +
+    duration +
+    0.02
+  );
+}
+
+
+/* ============================================================
+   BLE connection
+   ============================================================ */
 
 async function connectBLE() {
-  if (!navigator.bluetooth) {
+
+  if (
+    !navigator.bluetooth
+  ) {
+
     bleStatus.textContent =
       'Web Bluetooth unavailable';
 
     return;
   }
 
+
   try {
-    connectButton.disabled = true;
-    bleStatus.textContent = 'searching';
+
+    connectButton.disabled =
+      true;
+
+
+    bleStatus.textContent =
+      'searching';
+
 
     bluetoothDevice =
       await navigator.bluetooth.requestDevice({
-        filters: [
-          {
-            services: [SERVICE_UUID]
-          }
+
+        acceptAllDevices:
+          true,
+
+        optionalServices: [
+          SERVICE_UUID
         ]
+
       });
+
 
     bluetoothDevice.addEventListener(
       'gattserverdisconnected',
       handleBLEDisconnect
     );
 
-    bleStatus.textContent = 'connecting';
 
-    gattServer =
+    bleStatus.textContent =
+      'connecting';
+
+
+    const server =
       await bluetoothDevice.gatt.connect();
 
+
     const service =
-      await gattServer.getPrimaryService(
+      await server.getPrimaryService(
         SERVICE_UUID
       );
 
-    /*
-     * RX is the Nano's receive characteristic.
-     * The iPhone writes commands here.
-     */
+
     rxCharacteristic =
       await service.getCharacteristic(
         RX_UUID
       );
 
-    /*
-     * TX is the Nano's transmit characteristic.
-     * Iris subscribes to it for ACK messages.
-     */
+
     txCharacteristic =
       await service.getCharacteristic(
         TX_UUID
       );
 
-    await txCharacteristic.startNotifications();
+
+    await txCharacteristic
+      .startNotifications();
+
 
     txCharacteristic.addEventListener(
       'characteristicvaluechanged',
-      handleNotification
+      handleBLENotification
     );
 
-    bleConnected = true;
+
+    bleConnected =
+      true;
+
 
     bleStatus.textContent =
-      `connected: ${bluetoothDevice.name || 'Iris Nano'}`;
+      `connected: ${
+        bluetoothDevice.name ||
+        'Iris Nano'
+      }`;
+
 
     connectButton.textContent =
       'Connected';
-  } catch (error) {
-    console.error('BLE connection error:', error);
 
-    bleConnected = false;
+
+  } catch (error) {
+
+    console.error(error);
+
+
+    bleConnected =
+      false;
+
 
     bleStatus.textContent =
       `error: ${error.message}`;
 
-    connectButton.disabled = false;
-    connectButton.textContent = 'Connect';
+
+    connectButton.disabled =
+      false;
+
+
+    connectButton.textContent =
+      'Connect BLE';
   }
 }
 
 
 function handleBLEDisconnect() {
-  bleConnected = false;
 
-  rxCharacteristic = null;
-  txCharacteristic = null;
-  gattServer = null;
+  bleConnected =
+    false;
 
-  ackStatus.textContent = '--';
+
+  rxCharacteristic =
+    null;
+
+
+  txCharacteristic =
+    null;
+
+
+  setCommand('S');
+
 
   bleStatus.textContent =
     'disconnected';
 
-  connectButton.disabled = false;
-  connectButton.textContent = 'Connect';
+
+  ackStatus.textContent =
+    '--';
+
+
+  connectButton.disabled =
+    false;
+
+
+  connectButton.textContent =
+    'Connect BLE';
 }
 
 
-function handleNotification(event) {
-  const value = event.target.value;
+function handleBLENotification(
+  event
+) {
+
+  const value =
+    event.target.value;
+
 
   const bytes =
     new Uint8Array(
@@ -494,47 +1581,91 @@ function handleNotification(event) {
       value.byteLength
     );
 
-  const message =
-    decoder.decode(bytes);
 
-  ackStatus.textContent = message;
+  ackStatus.textContent =
+    decoder.decode(
+      bytes
+    );
 }
 
 
-/* ---------------- BLE command loop ---------------- */
+/* ============================================================
+   BLE command transmission
+   ============================================================ */
 
-async function transmitCommand() {
+async function sendCommand() {
+
   if (
     !bleConnected ||
     !rxCharacteristic ||
-    writeInProgress
+    writeBusy
   ) {
+
     return;
   }
 
-  writeInProgress = true;
 
-  const command = desiredCommand;
+  writeBusy =
+    true;
+
 
   try {
-    const data =
-      encoder.encode(command);
+
+    const bytes =
+      encoder.encode(
+        desiredCommand
+      );
+
 
     await rxCharacteristic
-      .writeValueWithoutResponse(data);
+      .writeValueWithoutResponse(
+        bytes
+      );
+
+
   } catch (error) {
+
     console.error(
       'BLE write failed:',
       error
     );
 
-    bleStatus.textContent =
-      `write error: ${error.message}`;
+
   } finally {
-    writeInProgress = false;
+
+    writeBusy =
+      false;
   }
 }
 
+
+setInterval(
+  sendCommand,
+  BLE_INTERVAL_MS
+);
+
+
+/* ============================================================
+   Safety
+   ============================================================ */
+
+document.addEventListener(
+  'visibilitychange',
+  () => {
+
+    if (
+      document.hidden
+    ) {
+
+      setCommand('S');
+    }
+  }
+);
+
+
+/* ============================================================
+   Buttons
+   ============================================================ */
 
 connectButton.addEventListener(
   'click',
@@ -542,37 +1673,19 @@ connectButton.addEventListener(
 );
 
 
-/*
- * 10 Hz actuator command stream.
- *
- * Commands are intentionally repeated even if unchanged.
- * The Nano uses command arrival as a link watchdog.
- */
-setInterval(
-  transmitCommand,
-  BLE_PERIOD_MS
+soundButton.addEventListener(
+  'click',
+  enableSound
 );
 
 
-/*
- * If iOS backgrounds the page, immediately change the desired
- * command to STOP. The Nano also has its own independent
- * 500 ms communications failsafe.
- */
-document.addEventListener(
-  'visibilitychange',
-  () => {
-    if (document.hidden) {
-      desiredCommand = 'S';
-      commandStatus.textContent = 'S';
-    }
-  }
-);
+/* ============================================================
+   Start
+   ============================================================ */
 
-
-/* Start the camera immediately. */
 startCamera();
 
 </script>
+
 </body>
 </html>
