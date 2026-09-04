@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#050608" />
+  <title>IRIS / ATLAS</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Picovoice Porcupine + WebVoiceProcessor (official IIFE builds). -->
+  <script src="https://unpkg.com/@picovoice/porcupine-web/dist/iife/index.js"></script>
+  <script src="https://unpkg.com/@picovoice/web-voice-processor/dist/iife/index.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>IRIS <b>v4</b></span>
+      </div>
+      <nav class="tabs" aria-label="Main views">
+        <button class="tab active" data-tab="debug" type="button">DEBUG</button>
+        <button class="tab" data-tab="panel" type="button">PANEL</button>
+      </nav>
+    </header>
+
+    <main>
+      <!-- DEBUG TAB -->
+      <section id="debugView" class="view active" aria-label="Debug interface">
+        <div class="video-wrap panel-card">
+          <video id="cameraVideo" playsinline muted autoplay></video>
+          <canvas id="overlayCanvas"></canvas>
+          <div id="cameraBadge" class="camera-badge">CAMERA OFF</div>
+        </div>
+
+        <section class="panel-card status-grid" aria-label="System status">
+          <div><span class="k">BLE</span><span id="bleStatus" class="v bad">disconnected</span></div>
+          <div><span class="k">CAMERA</span><span id="cameraStatus" class="v bad">off</span></div>
+          <div><span class="k">COMMAND</span><span id="commandStatus" class="v">S</span></div>
+          <div><span class="k">CENTROID X</span><span id="centroidStatus" class="v">0.50</span></div>
+          <div><span class="k">AREA</span><span id="areaStatus" class="v">0.000</span></div>
+          <div><span class="k">WIDTH</span><span id="widthStatus" class="v">0%</span></div>
+          <div><span class="k">ACK</span><span id="ackStatus" class="v">—</span></div>
+          <div><span class="k">TRACKING</span><span id="trackingStatus" class="v">paused</span></div>
+          <div><span class="k">MIC</span><span id="micStatus" class="v bad">off</span></div>
+          <div><span class="k">WAKE WORD</span><span id="wakeStatus" class="v bad">off</span></div>
+          <div><span class="k">ATLAS LINK</span><span id="atlasStatus" class="v bad">offline</span></div>
+          <div><span class="k">VOICE</span><span id="voiceStatus" class="v">idle</span></div>
+        </section>
+
+        <section class="panel-card controls-stack">
+          <button id="connectBleBtn" class="primary full" type="button">Connect BLE</button>
+          <button id="cameraBtn" class="full" type="button">Start Camera</button>
+          <button id="trackingBtn" class="full" type="button">Start Tracking</button>
+          <button id="audioBtn" class="full" type="button">Enable Audio</button>
+          <button id="wakeBtn" class="full" type="button">Start “Hey Atlas”</button>
+        </section>
+
+        <section class="panel-card">
+          <h2>Target Tracking</h2>
+
+          <label class="control-row">
+            <span>Target color</span>
+            <input id="targetColor" type="color" value="#ff0000" />
+          </label>
+
+          <label class="control-row slider-row">
+            <span>Tolerance <output id="toleranceOut">120</output></span>
+            <input id="tolerance" type="range" min="20" max="220" step="1" value="120" />
+          </label>
+
+          <label class="control-row slider-row">
+            <span>Stop width <output id="stopWidthOut">75%</output></span>
+            <input id="stopWidth" type="range" min="50" max="95" step="1" value="75" />
+          </label>
+        </section>
+
+        <section class="panel-card">
+          <h2>Manual Motion Test</h2>
+          <div class="motion-grid">
+            <span></span>
+            <button data-manual="F" type="button">F</button>
+            <span></span>
+            <button data-manual="L" type="button">L</button>
+            <button data-manual="S" class="stop" type="button">S</button>
+            <button data-manual="R" type="button">R</button>
+          </div>
+        </section>
+
+        <section class="panel-card audio-card">
+          <h2>Audio / Voice</h2>
+          <div class="meter-shell"><div id="micMeter" class="meter-fill"></div></div>
+          <div class="transcript-box">
+            <span class="k">LAST HEARD</span>
+            <div id="lastTranscript">—</div>
+          </div>
+          <div class="transcript-box">
+            <span class="k">ATLAS REPLY</span>
+            <div id="lastReply">—</div>
+          </div>
+          <div class="button-row">
+            <button id="listenOnceBtn" type="button">Listen Once</button>
+            <button id="testToneBtn" type="button">Test Tone</button>
+          </div>
+          <label class="input-label">
+            <span>Test speech output</span>
+            <div class="inline-input">
+              <input id="ttsInput" type="text" value="Iris audio output is online." autocomplete="off" />
+              <button id="speakBtn" type="button">Speak</button>
+            </div>
+          </label>
+        </section>
+
+        <section class="panel-card">
+          <h2>ATLAS Connection</h2>
+          <p class="hint">Optional. ATLAS can control the panel and return spoken answers over WebSocket.</p>
+          <label class="input-label">
+            <span>WebSocket URL</span>
+            <input id="atlasWsUrl" type="text" placeholder="wss://your-atlas-host.example/ws" autocomplete="off" />
+          </label>
+          <div class="button-row">
+            <button id="atlasConnectBtn" type="button">Connect ATLAS</button>
+            <button id="atlasDisconnectBtn" type="button">Disconnect</button>
+          </div>
+        </section>
+
+        <section class="panel-card">
+          <h2>Porcupine Setup</h2>
+          <p class="hint">The key stays in this browser's local storage. The app can train and cache “Hey Atlas” automatically the first time.</p>
+          <label class="input-label">
+            <span>Picovoice AccessKey</span>
+            <input id="picovoiceKey" type="password" placeholder="Paste AccessKey" autocomplete="off" />
+          </label>
+          <label class="control-row slider-row">
+            <span>Wake sensitivity <output id="wakeSensitivityOut">0.60</output></span>
+            <input id="wakeSensitivity" type="range" min="0.1" max="1" step="0.05" value="0.60" />
+          </label>
+        </section>
+
+        <section class="panel-card">
+          <h2>Panel Preview</h2>
+          <div class="preview-buttons">
+            <button data-demo-state="idle" type="button">Idle</button>
+            <button data-demo-state="listening" type="button">Listening</button>
+            <button data-demo-state="thinking" type="button">Thinking</button>
+            <button data-demo-state="speaking" type="button">Speaking</button>
+            <button data-demo-state="following" type="button">Following</button>
+            <button data-demo-state="warning" type="button">Warning</button>
+          </div>
+        </section>
+
+        <section class="panel-card log-card">
+          <h2>Event Log</h2>
+          <pre id="eventLog"></pre>
+        </section>
+      </section>
+
+      <!-- PANEL / AESTHETIC TAB -->
+      <section id="panelView" class="view" aria-label="ATLAS panel">
+        <div id="droidShell" class="droid-shell state-idle mood-calm">
+          <div class="info-window">
+            <div class="info-topline">
+              <span class="info-name">ATLAS</span>
+              <span id="panelModeLabel" class="info-mode">IDLE</span>
+            </div>
+            <div id="panelMessage" class="panel-message">SYSTEM READY</div>
+            <div class="voice-wave" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <div class="info-bottomline">
+              <span id="panelBleInfo">BLE --</span>
+              <span id="panelAtlasInfo">LINK --</span>
+              <span id="panelMicInfo">MIC --</span>
+            </div>
+          </div>
+
+          <div class="droid-panel">
+            <div class="wedge wedge-left" data-zone="wedgeLeft"></div>
+            <div class="wedge wedge-right" data-zone="wedgeRight"></div>
+
+            <div class="pillar" data-zone="pillar">
+              <div class="pillar-core"></div>
+            </div>
+
+            <div class="orb orb-1" data-zone="orb1"></div>
+            <div class="orb orb-2" data-zone="orb2"></div>
+            <div class="orb orb-3" data-zone="orb3"></div>
+
+            <div class="square square-1" data-zone="square1"></div>
+            <div class="square square-2" data-zone="square2"></div>
+
+            <div class="center-display" data-zone="center">
+              <div class="scan-line"></div>
+              <div id="centerGlyph" class="center-glyph">•••</div>
+            </div>
+
+            <div class="bar bar-1" data-zone="bar1"><div id="bar1Fill"></div></div>
+            <div class="bar bar-2" data-zone="bar2"><div id="bar2Fill"></div></div>
+          </div>
+
+          <div class="panel-footer">
+            <span id="panelLastHeard">HEY ATLAS READY</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <canvas id="processCanvas" width="160" height="120" hidden></canvas>
+  <script src="iris.js"></script>
+</body>
+</html>
