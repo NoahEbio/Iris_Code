@@ -1,170 +1,395 @@
-IRIS / ATLAS Web v4
+# IRIS / ATLAS Web v5
 
-This is the web-only version for the iPhone/Bluefy + GitHub Pages setup. No Swift is used.
+IRIS is a web-only iPhone/Bluefy controller for the Iris rover.
 
-What changed
+The phone performs fast local camera tracking and sends motor commands over BLE. ATLAS handles wake-word detection, higher-level voice requests, speech replies, and the animated panel over WebSocket.
 
-Two views: DEBUG and PANEL.
+## Included
 
-DEBUG preserves the Iris v3 dark mobile layout and the existing target-tracking controls.
+- DEBUG and PANEL tabs
+- Mirrored front/selfie camera
+- Target outline and tracking information
+- Selectable target color and tolerance
+- Forward, reverse, slow-turn, fast-turn, and stop commands
+- Two-tone wake acknowledgement
+- Server-side openWakeWord audio processing
+- No Picovoice key required
+- Configurable ATLAS WebSocket
+- ATLAS-controlled panel, speech, tracking, and motor commands
+- Future camera-tilt servo support
+- Python openWakeWord bridge
 
-PANEL is the astromech-style faceplate display based on the sketch, with separate light zones, meters, animations, status text, and ATLAS-controlled panel state.
+## Repository structure
 
-Selfie/front camera tracking is preserved.
+```text
+Iris_Code/
+├── index.html
+├── style.css
+├── iris.js
+├── README.md
+├── .gitignore
+└── atlas_bridge/
+    ├── server.py
+    ├── requirements.txt
+    └── .env.example
+```
 
-BLE protocol is preserved as single-character F / L / R / S commands.
+## Phone setup
 
-Audio input is integrated.
+1. Open the GitHub Pages URL in Bluefy.
+2. Open the DEBUG tab.
+3. Tap **Start Camera**.
+4. Approve camera access.
+5. Tap **Connect BLE**.
+6. Select the Iris Arduino.
+7. Enter the ATLAS WebSocket URL.
+8. Tap **Connect ATLAS**.
+9. Tap **Enable Audio**.
+10. Tap **Start “Hey Atlas.”**
 
-Picovoice Porcupine wake-word support for “Hey Atlas” is integrated.
+## Secure WebSocket requirement
 
-The two-tone wake acknowledgement is integrated.
+GitHub Pages uses HTTPS. Therefore, the phone must connect to ATLAS using:
 
-Browser speech recognition is used after the wake word.
+```text
+wss://
+```
 
-Browser speech synthesis is used for ATLAS voice output.
+An insecure connection beginning with `ws://` will normally be blocked.
 
-Optional WebSocket connection lets the PC-side ATLAS process control the panel, send spoken replies, send robot commands, and start/stop tracking.
+The ATLAS bridge can later be placed behind Tailscale Serve, Caddy, Cloudflare Tunnel, or another secure reverse proxy.
 
-Upload to the existing GitHub Pages repository
+Do not expose the bridge directly to the public internet without authentication.
 
-Upload/replace these files at the repository root:
+## ATLAS bridge setup
 
-index.html
+Run the bridge on PODIUM.
 
-style.css
+```bash
+cd atlas_bridge
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
 
-iris.js
+The `.env` file is intentionally excluded from GitHub.
 
-models/README.txt
+## openWakeWord model
 
-You can also add the optional Picovoice model files under models/ as described below.
+Download or train an openWakeWord model for:
 
-First run on the iPhone
+```text
+Hey Atlas
+```
 
-Open the GitHub Pages URL in Bluefy.
+Set `OPENWAKEWORD_MODEL` in `.env` to the model’s location.
 
-Open DEBUG.
+Example:
 
-Tap Start Camera and approve camera permission.
+```env
+OPENWAKEWORD_MODEL=models/hey_atlas.onnx
+```
 
-Tap Connect BLE and select the Iris Arduino.
+openWakeWord does not currently include a stock “Hey Atlas” model, so a custom `.onnx` or `.tflite` model is required.
 
-Tap Enable Audio and approve microphone permission.
+## Starting the bridge
 
-Paste a Picovoice AccessKey in the Porcupine setup box.
+Load the environment variables:
 
-Tap Start “Hey Atlas”.
+```bash
+set -a
+source .env
+set +a
+```
 
-Say: Hey Atlas, follow me.
+Start the server:
 
-The key is stored only in that browser's local storage by this code; it is not written into the repository.
+```bash
+python server.py
+```
 
-Porcupine models
+The default local address is:
 
-The app first looks for:
+```text
+ws://127.0.0.1:8765
+```
 
-models/porcupine_params.pv
+The phone will eventually use a secure `wss://` address provided through the Tailscale or reverse-proxy configuration.
 
-models/hey_atlas_wasm.ppn
+## ATLAS connection
 
-If porcupine_params.pv is not in the repo, it uses Picovoice's official parameter model directly from their GitHub repository.
+`ATLAS_HTTP_URL` is the address where the bridge sends spoken questions.
 
-If hey_atlas_wasm.ppn is not in the repo, the app uses Picovoice's model API to train “Hey Atlas” at startup using the AccessKey. For the most reliable long-term setup, generate a custom Web (WASM) Hey Atlas keyword in Picovoice Console and upload it as models/hey_atlas_wasm.ppn.
+Example:
 
-ATLAS WebSocket protocol
+```env
+ATLAS_HTTP_URL=http://127.0.0.1:8000/iris
+```
 
-Enter a WebSocket URL in DEBUG and tap Connect ATLAS. If the phone page is served over HTTPS (GitHub Pages), use a wss:// endpoint. Most browsers block an insecure ws:// endpoint from an HTTPS page.
+The bridge sends:
 
-Phone -> ATLAS
+```json
+{
+  "text": "What is the circumference of Earth?",
+  "source": "iris",
+  "client": "IRIS-web-v5"
+}
+```
 
-Wake word:
+The ATLAS endpoint should return JSON containing one of these:
 
-{"type":"event","event":"wake_word_detected","label":"Hey Atlas"}
+```json
+{
+  "text": "Response from ATLAS"
+}
+```
 
-User speech:
+```json
+{
+  "reply": "Response from ATLAS"
+}
+```
 
-{"type":"utterance","text":"What is the circumference of Earth?","source":"voice"}
+```json
+{
+  "response": "Response from ATLAS"
+}
+```
+
+It may also include panel instructions:
+
+```json
+{
+  "text": "I found the answer.",
+  "panel": {
+    "mode": "speaking",
+    "message": "RESPONDING"
+  }
+}
+```
+
+## BLE motor protocol
+
+| Command | Motion | Motor behavior |
+|---|---|---|
+| `F` | Forward | Both motors forward |
+| `B` | Reverse | Both motors reverse |
+| `l` | Left slow | Left stopped, right forward |
+| `L` | Left fast | Left reverse, right forward |
+| `r` | Right slow | Left forward, right stopped |
+| `R` | Right fast | Left forward, right reverse |
+| `S` | Stop | Both motors stopped |
+
+The web application sends this extended protocol.
+
+The Arduino firmware must be updated to recognize:
+
+```text
+B
+l
+L
+r
+R
+```
+
+The original `F/L/R/S` firmware cannot provide all the new motion behaviors.
+
+## Tracking behavior
+
+- Target centered: `F`
+- Target moderately left: `l`
+- Target near the far-left edge: `L`
+- Target moderately right: `r`
+- Target near the far-right edge: `R`
+- Target larger than the Reverse Width setting: `B`
+- Target missing: `S`
+- Tracking disabled: `S`
+
+## Servo tilt protocol
+
+Servo tilt uses:
+
+```text
+T0
+```
+
+through:
+
+```text
+T180
+```
+
+Examples:
+
+```text
+T45
+T90
+T135
+```
+
+The web interface and ATLAS protocol are prepared for this command.
+
+The Arduino firmware must clamp the angle between 0 and 180 degrees and control the selected servo channel.
+
+## Phone-to-ATLAS WebSocket messages
+
+Connection message:
+
+```json
+{
+  "type": "hello",
+  "client": "IRIS-web-v5",
+  "capabilities": [
+    "panel",
+    "tts",
+    "voice",
+    "ble",
+    "tracking",
+    "camera-telemetry",
+    "pcm16-audio",
+    "openwakeword",
+    "servo-tilt"
+  ]
+}
+```
+
+Start audio:
+
+```json
+{
+  "type": "audio_start",
+  "format": "pcm_s16le",
+  "sampleRate": 16000,
+  "channels": 1,
+  "threshold": 0.5
+}
+```
+
+Spoken request:
+
+```json
+{
+  "type": "utterance",
+  "text": "Follow me",
+  "source": "voice"
+}
+```
 
 Tracking telemetry:
 
+```json
 {
-  "type":"telemetry",
-  "tracking":true,
-  "command":"F",
-  "target":{"x":0.51,"y":0.48,"area":0.08,"width":0.27}
-}
-
-ATLAS -> Phone
-
-Make the phone speak:
-
-{"type":"tts","text":"Earth's equatorial circumference is about 40,075 kilometers."}
-
-Control the whole droid panel:
-
-{
-  "type":"panel_state",
-  "state":{
-    "mode":"thinking",
-    "mood":"curious",
-    "message":"CALCULATING",
-    "energy":0.62,
-    "attention":0.91,
-    "brightness":1.0
+  "type": "telemetry",
+  "tracking": true,
+  "command": "F",
+  "target": {
+    "x": 0.51,
+    "y": 0.48,
+    "area": 0.08,
+    "width": 0.27
   }
 }
+```
 
-Use a custom color:
+After `audio_start`, binary WebSocket messages contain mono, 16-bit, little-endian PCM audio at 16 kHz.
 
+## ATLAS-to-phone messages
+
+Wake word detected:
+
+```json
 {
-  "type":"panel_state",
-  "state":{
-    "mode":"speaking",
-    "color":"#47ffd1",
-    "message":"RESPONDING",
-    "speechLevel":0.8
+  "type": "wake_word_detected",
+  "label": "Hey Atlas",
+  "score": 0.82
+}
+```
+
+Speak through the phone:
+
+```json
+{
+  "type": "tts",
+  "text": "I am ready."
+}
+```
+
+Start tracking:
+
+```json
+{
+  "type": "tracking",
+  "enabled": true
+}
+```
+
+Send a motor command:
+
+```json
+{
+  "type": "command",
+  "command": "B"
+}
+```
+
+Move the future tilt servo:
+
+```json
+{
+  "type": "servo_tilt",
+  "angle": 105
+}
+```
+
+Control the panel:
+
+```json
+{
+  "type": "panel_state",
+  "state": {
+    "mode": "thinking",
+    "message": "CALCULATING",
+    "energy": 0.62,
+    "attention": 0.91,
+    "brightness": 1
   }
 }
+```
 
-Control individual zones:
+## Panel zones
 
-{
-  "type":"panel_state",
-  "state":{
-    "mode":"idle",
-    "zones":{
-      "orb1":{"color":"#ffffff","brightness":1.5},
-      "orb2":{"color":"#ffb52e","brightness":0.6},
-      "square1":{"color":"#63d8ff","brightness":1.2}
-    }
-  }
-}
+ATLAS can control these display zones:
 
-Available zone names:
+```text
+wedgeLeft
+wedgeRight
+pillar
+orb1
+orb2
+orb3
+square1
+square2
+center
+bar1
+bar2
+```
 
-wedgeLeft, wedgeRight, pillar, orb1, orb2, orb3, square1, square2, center, bar1, bar2.
+## Local voice commands
 
-ATLAS can also send an existing robot command:
+These commands bypass the language model for lower latency:
 
-{"type":"command","command":"S"}
+- Follow me
+- Stop
+- Halt
+- Freeze
+- Emergency stop
+- Forward
+- Reverse
+- Back up
+- Turn left
+- Turn right
+- Turn left fast
+- Turn right fast
 
-or control follow mode:
-
-{"type":"tracking","enabled":true}
-
-Built-in voice command routing
-
-These bypass the LLM for low latency:
-
-follow me -> starts target tracking
-
-stop, halt, freeze, emergency stop -> stops tracking and sends S
-
-forward, turn left, turn right -> direct F/L/R command
-
-Anything else is sent to ATLAS over the configured WebSocket.
-
-Important compatibility note
-
-This version intentionally keeps the current Arduino-facing protocol at F / L / R / S. It does not invent a new reverse byte or motor-speed protocol, so it should not require an Arduino change just to test the new screen/audio system.
+Other recognized speech is sent to ATLAS.
