@@ -377,10 +377,7 @@ async def main() -> None:
         PORT,
         max_size=2**20,
     ):
-        await asyncio
-        .get_running_loop()
-        .create_future()
-
+                await asyncio.get_running_loop().create_future()
 
 if __name__ == "__main__":
     asyncio.run(main())
