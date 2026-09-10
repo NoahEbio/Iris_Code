@@ -725,11 +725,12 @@
 
       state.bleDevice =
         await navigator.bluetooth.requestDevice({
-          filters: [
-            {
-              services: [BLE.service]
-            }
-          ],
+          // acceptAnyDevice (iOS uses "acceptAllDevices" spelling) lets the
+          // Nano appear in the picker even if the BLE advertisement doesn't
+          // include the Nordic UART service UUID — some firmwares advertise
+          // the local name only. The UART service is still listed under
+          // optionalServices so we can access it once connected.
+          acceptAllDevices: true,
 
           optionalServices: [
             BLE.service
@@ -860,26 +861,45 @@
     const bytes =
       new TextEncoder().encode(command);
 
-    try {
-      if (
-        state.txChar.properties.writeWithoutResponse &&
-        state.txChar.writeValueWithoutResponse
-      ) {
+    // Try each write method in its own try/catch so a failure in one
+    // (common on iOS Bluefy when writeWithoutResponse claims to be
+    // supported but actually errors) falls through to the next instead of
+    // giving up on the command.
+    if (
+      state.txChar.properties.writeWithoutResponse &&
+      state.txChar.writeValueWithoutResponse
+    ) {
+      try {
         await state.txChar.writeValueWithoutResponse(
           bytes
         );
-      } else if (
-        state.txChar.writeValueWithResponse
-      ) {
+        return true;
+      } catch (error) {
+        log(
+          'BLE writeWithoutResponse failed, falling back',
+          String(error)
+        );
+      }
+    }
+
+    if (state.txChar.writeValueWithResponse) {
+      try {
         await state.txChar.writeValueWithResponse(
           bytes
         );
-      } else {
-        await state.txChar.writeValue(
-          bytes
+        return true;
+      } catch (error) {
+        log(
+          'BLE writeValueWithResponse failed, falling back',
+          String(error)
         );
       }
+    }
 
+    try {
+      await state.txChar.writeValue(
+        bytes
+      );
       return true;
     } catch (error) {
       log(
